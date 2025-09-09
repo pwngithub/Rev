@@ -1,43 +1,40 @@
 
 import streamlit as st
-import PyPDF2
 import pandas as pd
-import io
 
 st.set_page_config(page_title="Revenue Report Analyzer", layout="wide")
+
 st.title("📊 Revenue Report Analyzer")
 
-uploaded_file = st.file_uploader("Upload Revenue Report PDF", type=["pdf"])
-
-def parse_pdf(file):
-    try:
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text
-    except Exception as e:
-        st.error(f"Failed to parse PDF: {e}")
-        return ""
-
-def extract_table_rows(text):
-    lines = text.splitlines()
-    rows = []
-    for line in lines:
-        parts = line.strip().split("\t")
-        if len(parts) >= 4 and parts[1].isdigit():
-            rows.append(parts[:4])
-    return rows
+uploaded_file = st.file_uploader("Upload Revenue CSV", type="csv")
 
 if uploaded_file:
-    raw_text = parse_pdf(uploaded_file)
-    rows = extract_table_rows(raw_text)
-    if rows:
-        df = pd.DataFrame(rows, columns=["Row", "Service", "Last Month", "This Month"])
-        for col in ["Last Month", "This Month"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["Change"] = df["This Month"] - df["Last Month"]
-        st.dataframe(df, use_container_width=True)
-        st.download_button("Download CSV", df.to_csv(index=False), "revenue.csv", "text/csv")
-    else:
-        st.warning("No rows detected. Check PDF format.")
+    df = pd.read_csv(uploaded_file)
+
+    # Clean dollar fields
+    for col in ["AUT Amount", "MAN Amount", "ADJ Amount", "Total Amount"]:
+        df[col] = df[col].astype(str).str.replace("[$,()]", "", regex=True).str.replace(")", "", regex=False)
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["Net Change"] = df["Sub Count End"] - df["Sub Count Start"]
+
+    st.subheader("📌 Summary Metrics")
+    total_rev = df["Total Amount"].sum()
+    total_net_change = df["Net Change"].sum()
+    st.metric("Total Revenue", f"${total_rev:,.2f}")
+    st.metric("Total Subscriber Net Change", int(total_net_change))
+
+    st.subheader("📈 Top Movers")
+    top_movers = df[["Pkg Name", "Sub Count Start", "Sub Count End", "Net Change"]].sort_values("Net Change", ascending=False)
+    st.dataframe(top_movers, use_container_width=True)
+
+    st.subheader("📂 Revenue Breakdown by Section")
+    section_summary = df.groupby("Section").agg(
+        Revenue_Total=pd.NamedAgg(column="Total Amount", aggfunc="sum"),
+        Subscriber_Change=pd.NamedAgg(column="Net Change", aggfunc="sum")
+    ).sort_values("Revenue_Total", ascending=False)
+    st.dataframe(section_summary, use_container_width=True)
+
+    st.download_button("📥 Download Cleaned CSV", df.to_csv(index=False), file_name="cleaned_revenue_report.csv")
+else:
+    st.info("Please upload a CSV file to begin.")
